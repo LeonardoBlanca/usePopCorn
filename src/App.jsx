@@ -1,6 +1,9 @@
 /* eslint-disable react/prop-types */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import StarRating from "./StarRating";
+import { useMovies } from "./useMovies";
+import { useLocalStorageState } from "./useLocalStorageState";
+import { useKey } from "../useKey";
 
 
 const average = (arr) =>
@@ -11,18 +14,15 @@ const KEY = "dcc12605";
 // ========== Categoria: Structural ==========
 export default function App() {
   const [query, setQuery] = useState("");
-  const [movies, setMovies] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState(null);
-  
-  // const [watched, setWatched] = useState([]);
-  // Vamos passar um callback na useState para restaurar do localstorage ou array vazio
-  const [watched, setWatched] = useState(function(){
-    const storedValue = localStorage.getItem('watched');
-    // vamos retornar o valor armazenado como state inicial.
-    return JSON.parse(storedValue) || []
-  });
+
+// Faço o destructuring das informações que o hook retorna
+// Se quiser posso mudar o nome colocando movies: data
+// Aí neste documento eu devo usar data para puxar as infos do movie
+// Eu posso chamar a função antes de declarar ela por causa do Hoisting
+const {movies, isLoading, error} = useMovies(query);
+
+const [watched, setWatched] = useLocalStorageState([], "watched");
 
   function handleSelectMovie(id) {
     setSelectedId((selectedId) => (id === selectedId ? null : id));
@@ -34,75 +34,12 @@ export default function App() {
 
   function handleAddWatched(movie) {
     setWatched((watched) => [...watched, movie]);
-
     
   }
 
   function handleDeleteWatched(id){
     setWatched(watched => watched.filter(movie => movie.imdbID !== id))
   }
-
-  // Armazenando o histórico de assistidos localmente.
-  useEffect(function(){
-    localStorage.setItem('watched', JSON.stringify(watched))
-  }, [watched])
-
-  useEffect(
-    function () {
-      // AbortController serve para interromper muitas requisições à api e deixar sempre a mais recente.
-      // É uma API do browser e não tem a ver com o React.
-      // A função será retornada no final
-      const controller = new AbortController()
-
-      async function fetchMovies() {
-        try {
-          setIsLoading(true);
-          setError("");
-          const res = await fetch(
-            `http://www.omdbapi.com/?apikey=${KEY}&s=${query}`, {signal: controller.signal}
-          );
-
-          // Se der erro na chamada da API
-          if (!res.ok)
-            throw new Error("Something went wrong with fetching movies");
-
-          // Se der bom na chamada da API
-          const data = await res.json();
-          // Se determinado parâmetro da API for falso, mostre um erro.
-          if (data.Response === "False") throw new Error("Movie not found");
-
-          setMovies(data.Search);
-          setError("");
-        } catch (err) {
-          
-          
-          if(err.name !== "AbortError") {
-            console.log(err.message);
-
-            setError(err.message);
-          }
-        } finally {
-          setIsLoading(false);
-        }
-      }
-
-      // Colocando pra funcionar depois de 3 caracteres
-      if (query.length < 3) {
-        setMovies([]);
-        setError("");
-        return;
-      }
-
-      handleCloseMovie();
-      fetchMovies();
-
-      return function(){
-        controller.abort();
-      }
-    },
-    [query]
-  );
-  //
 
  
 
@@ -166,6 +103,17 @@ function Main({ children }) {
 
 // ========== Category: Stateful ==========
 function Search({ query, setQuery }) {
+// Ref só é montado depois do virtual dom estar pronto.
+// Por este motivo também precisa de um useEffect.
+const inputEl = useRef(null)
+
+// O segundo argumento descreve o que queremos que a tecla pressionada faça
+useKey('Enter', ()=>{
+  if(document.activeElement === inputEl.current) return
+  inputEl.current.focus();
+  setQuery('')
+})
+
   return (
     <input
       className="search"
@@ -173,6 +121,7 @@ function Search({ query, setQuery }) {
       placeholder="Search movies..."
       value={query}
       onChange={(e) => setQuery(e.target.value)}
+      ref={inputEl}
     />
   );
 }
@@ -248,6 +197,16 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
   const [isLoading, setIsLoading] = useState(false);
   const [userRating, setUserRating] = useState("");
 
+  // Contar quantas vezes foi clicado na Star Rating
+  // Não queremos que renderize novamente ao aumentar o número
+  // Por isso usamos useRef.
+  const countRef = useRef(0);
+
+  // Toda vez que o userRating for alterado (clicado) ele vai rodar esse effect
+  useEffect(function(){
+    if(userRating) countRef.current ++;
+  }, [userRating]);
+
   const isWatched = watched.map((movie) => movie.imdbID).includes(selectedId);
   const watchedUserRating = watched.find(
     (movie) => movie.imdbID === selectedId
@@ -277,16 +236,16 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
       // Se o texto for 120 minutos, ele vai separar em 2 itens "120" e "minutos"
       runtime: Number(runtime.split(" ").at(0)),
       userRating,
+      countRatingDecisions: countRef.current,
     };
 
     onAddWatched(newWatchedMovie);
     onCloseMovie();
   }
+  useKey('Escape', onCloseMovie);
 
   useEffect(
     function () {
- 
-
       async function getMovieDetails() {
         setIsLoading(true);
         const res = await fetch(
@@ -315,15 +274,7 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
     }
   }, [title]);
 
-  useEffect(function(){
-    function callback(e) {if(e.code === 'Escape'){
-      onCloseMovie();}
-     }
-    document.addEventListener('keydown', callback);
-    return function(){
-      document.removeEventListener('keydown', callback)
-    }
-   }, [onCloseMovie]);
+  
 
   return (
     <div className="details">
@@ -386,7 +337,6 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
 // ========== Category: Stateless ==========
 // Possui variável mas não possui state
 function WatchedSummary({ watched }) {
-  console.log(watched)
   const avgImdbRating = average(watched.map((movie) => movie.imdbRating));
   const avgUserRating = average(watched.map((movie) => movie.userRating));
   const avgRuntime = average(watched.map((movie) => movie.runtime));

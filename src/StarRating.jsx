@@ -17,7 +17,7 @@ StarRating.propTypes = {
   color: PropTypes.string,
   defaultRating: PropTypes.number,
   size:PropTypes.number,
-  messages: PropTypes.Array,
+  messages: PropTypes.array,
   className: PropTypes.string,
   onSetRating: PropTypes.func,
 };
